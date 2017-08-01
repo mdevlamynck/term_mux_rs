@@ -7,6 +7,7 @@ use std::ffi::{CStr, CString};
 use std::io::{self, Write, Read};
 use std::process::{Command, Stdio};
 use std::os::unix::process::CommandExt;
+use std::ops;
 
 pub struct Pty {
     master: File
@@ -19,8 +20,8 @@ pub enum PtyError {
 }
 
 pub struct WinSize {
-    width:  u16,
-    height: u16,
+    pub width:  u16,
+    pub height: u16,
 }
 
 impl WinSize {
@@ -77,6 +78,20 @@ impl Write for Pty {
 
     fn flush(&mut self) -> io::Result<()> {
         self.master.flush()
+    }
+}
+
+impl ops::Deref for Pty {
+    type Target = File;
+
+    fn deref(&self) -> &File {
+        &self.master
+    }
+}
+
+impl ops::DerefMut for Pty {
+    fn deref_mut(&mut self) -> &mut File {
+        &mut self.master
     }
 }
 

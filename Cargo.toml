@@ -6,3 +6,11 @@ license = "MIT"
 
 [dependencies]
 libc = "0"
+termion = "1"
+
+[[bin]]
+name = "term_mux"
+doc = false
+
+[lib]
+doc = true
