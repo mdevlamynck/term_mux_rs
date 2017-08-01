@@ -1,0 +1,8 @@
+[package]
+name = "term_mux"
+version = "0.1.0"
+authors = ["Matthias Devlamynck <matthias.devlamynck@mailoo.org>"]
+license = "MIT"
+
+[dependencies]
+libc = "0"
