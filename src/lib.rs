@@ -4,19 +4,22 @@ use std::fs::{OpenOptions, File};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{AsRawFd, IntoRawFd, FromRawFd};
 use std::ffi::{CStr, CString};
+use std::ptr;
 use std::io::{self, Write, Read};
 use std::process::{Command, Stdio};
 use std::os::unix::process::CommandExt;
 use std::ops;
 
 pub struct Pty {
-    master: File
+    fd:   RawFd,
+    file: File
 }
 
 #[derive(Debug)]
 pub enum PtyError {
     OpenPty,
     SpawnShell,
+    Resize,
 }
 
 pub struct WinSize {
@@ -29,9 +32,9 @@ impl WinSize {
         libc::winsize {
             ws_row:    self.width,
             ws_col:    self.height,
-            // Unused
+
+            // Unused fields in libc::winsize
             ws_xpixel: 0,
-            // Unused
             ws_ypixel: 0,
         }
     }
@@ -40,44 +43,55 @@ impl WinSize {
 type RawFd = libc::c_int;
 
 impl Pty {
+    /// Spawns a child process running the given shell executable with the
+    /// given size in a newly created pty.
+    /// Returns a Pty representing the master side controlling the pty.
     pub fn spawn(shell: &str, size: &WinSize) -> Result<Pty, PtyError> {
-        let (master_fd, tty_path) = getpty(&size)?;
-        let (stdin, stdout, stderr) = slave_stdio(&tty_path)?;
+        let (master, slave) = openpty(&size)?;
         
-        let result = Command::new(&shell)
-            .stdin(unsafe  { Stdio::from_raw_fd(stdin.as_raw_fd()) })
-            .stdout(unsafe { Stdio::from_raw_fd(stdout.as_raw_fd()) })
-            .stderr(unsafe { Stdio::from_raw_fd(stderr.as_raw_fd()) })
+        Command::new(&shell)
+            .stdin(unsafe  { Stdio::from_raw_fd(slave) })
+            .stdout(unsafe { Stdio::from_raw_fd(slave) })
+            .stderr(unsafe { Stdio::from_raw_fd(slave) })
             .before_exec(before_exec)
-            .spawn();
+            .spawn()
+            .and_then(|_| {
+                let mut pty = Pty {
+                    fd:   master,
+                    file: unsafe { File::from_raw_fd(master) }
+                };
 
-        match result {
-            Ok(mut process) => {
-                drop(stdin);
-                drop(stdout);
-                drop(stderr);
-                Ok(Pty {
-                    master: unsafe { File::from_raw_fd(master_fd) }
-                })
-            },
-            Err(_) => Err(PtyError::SpawnShell)
+                pty.resize(&size);
+
+                Ok(pty)
+            })
+            .map_err(|_| PtyError::SpawnShell)
+    }
+
+    /// Resize the child pty.
+    pub fn resize(&self, size: &WinSize) -> Result<(), PtyError> {
+        unsafe {
+            libc::ioctl(self.fd, libc::TIOCSWINSZ, &size.to_c_winsize())
+                .to_result()
+                .map(|_| ())
+                .map_err(|_| PtyError::Resize)
         }
     }
 }
 
 impl Read for Pty {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.master.read(buf)
+        self.file.read(buf)
     }
 }
 
 impl Write for Pty {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.master.write(buf)
+        self.file.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.master.flush()
+        self.file.flush()
     }
 }
 
@@ -85,13 +99,13 @@ impl ops::Deref for Pty {
     type Target = File;
 
     fn deref(&self) -> &File {
-        &self.master
+        &self.file
     }
 }
 
 impl ops::DerefMut for Pty {
     fn deref_mut(&mut self) -> &mut File {
-        &mut self.master
+        &mut self.file
     }
 }
 
@@ -108,61 +122,43 @@ impl FromLibcResult for libc::c_int {
     }
 }
 
-fn getpty(size: &WinSize) -> Result<(RawFd, String), PtyError> {
-    let master_fd = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
-            .open("/dev/ptmx")
-            .map_err(|_| PtyError::OpenPty)?
-            .into_raw_fd();
+/// Creates a pty with the given size and returns the (master, slave)
+/// pair of file descriptors attached to it.
+fn openpty(size: &WinSize) -> Result<(RawFd, RawFd), PtyError> {
+    let mut master = 0;
+    let mut slave  = 0;
 
     unsafe {
-        libc::grantpt(master_fd)
+        // Create the pty master / slave pair
+        libc::openpty(&mut master,
+                      &mut slave,
+                      ptr::null_mut(),
+                      ptr::null(),
+                      &size.to_c_winsize())
             .to_result()
             .map_err(|_| PtyError::OpenPty)?;
 
-        libc::unlockpt(master_fd)
-            .to_result()
-            .map_err(|_| PtyError::OpenPty)?;
-
-        libc::ioctl(master_fd, libc::TIOCSWINSZ, &size.to_c_winsize())
+        // Configure master to be non blocking
+        libc::fcntl(master,
+                    libc::F_SETFL,
+                    libc::fcntl(master, libc::F_GETFL, 0) | libc::O_NONBLOCK)
             .to_result()
             .map_err(|_| PtyError::OpenPty)?;
     }
 
-    let tty_path = unsafe { CStr::from_ptr(libc::ptsname(master_fd)).to_string_lossy().into_owned() };
-    Ok((master_fd, tty_path))
+    Ok((master, slave))
 }
 
-fn slave_stdio(tty_path: &str) -> Result<(File, File, File), PtyError> {
-    let tty_c = CString::new(tty_path).unwrap();
-
-    let stdin = unsafe { File::from_raw_fd(
-        libc::open(tty_c.as_ptr(), libc::O_CLOEXEC | libc::O_RDONLY)
-            .to_result()
-            .map_err(|_| PtyError::OpenPty)?
-    ) };
-    let stdout = unsafe { File::from_raw_fd(
-        libc::open(tty_c.as_ptr(), libc::O_CLOEXEC | libc::O_WRONLY)
-            .to_result()
-            .map_err(|_| PtyError::OpenPty)?
-    ) };
-    let stderr = unsafe { File::from_raw_fd(
-        libc::open(tty_c.as_ptr(), libc::O_CLOEXEC | libc::O_WRONLY)
-            .to_result()
-            .map_err(|_| PtyError::OpenPty)?
-    ) };
-
-    Ok((stdin, stdout, stderr))
-}
-
+/// Run between the fork and exec calls. So it runs in the cild process
+/// before the process is replaced by the program we want to run.
 fn before_exec() -> io::Result<()> {
     unsafe {
+        // Create a new process group, this process being the master
         libc::setsid()
             .to_result()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, ""))?;
 
+        // Set this process as the controling terminal
         libc::ioctl(0, libc::TIOCSCTTY, 1)
             .to_result()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, ""))?;
@@ -181,42 +177,28 @@ mod tests {
         // Opening shell and its pty
         let mut pty = Pty::spawn("/bin/sh", &WinSize { width: 100, height: 100 }).unwrap();
 
-        let mut packet = [0; 4096];
-        let mut count_read = 0;
-
         // Reading
-        {
-            loop {
-                match pty.read(&mut packet) {
-                    Err(_)    => continue,
-                    Ok(0)     => continue,
-                    Ok(count) => { count_read = count; break; }
-                }
-            }
-
-            assert_eq!(2, count_read);
-
-            let output = String::from_utf8_lossy(&packet[..count_read]);
-            assert_eq!("$ ", &output);
-        }
+        assert!(read(&mut pty).ends_with("$ "));
 
         // Writing and reading effect
-        {
-            pty.write_all("exit\n".as_bytes()).unwrap();
-            pty.flush().unwrap();
+        pty.write_all("exit\n".as_bytes()).unwrap();
+        pty.flush().unwrap();
 
-            loop {
-                match pty.read(&mut packet) {
-                    Err(_)    => continue,
-                    Ok(0)     => continue,
-                    Ok(count) => { count_read = count; break; }
-                }
+        assert!(read(&mut pty).starts_with("exit"));
+    }
+
+    fn read(pty: &mut Pty) -> String {
+        let mut packet = [0; 4096];
+        let count_read;
+
+        loop {
+            match pty.read(&mut packet) {
+                Err(_)    => continue,
+                Ok(0)     => continue,
+                Ok(count) => { count_read = count; break; }
             }
-
-            assert_eq!(6, count_read);
-
-            let output = String::from_utf8_lossy(&packet[..count_read]);
-            assert_eq!("exit\r\n", &output);
         }
+
+        String::from_utf8_lossy(&packet[..count_read]).to_string()
     }
 }
