@@ -1,5 +1,7 @@
 # term_mux_rs (working title, I don't like it, see [#1](https://github.com/mdevlamynck/term_mux_rs/issues/1))
 
+[![Build Status](https://travis-ci.org/mdevlamynck/term_mux_rs.svg?branch=master)](https://travis-ci.org/mdevlamynck/term_mux_rs)
+
 Terminal multiplexer in rust
 
 This project only supports GNU/Linux at the moment. Redox, macOS and Windows support may happen in the future (in that order of priority).
