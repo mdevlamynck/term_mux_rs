@@ -13,6 +13,9 @@ pub mod pty {
     use libc;
     use ::tui::Size;
 
+    /// Master side of a pty master / slave pair.
+    ///
+    /// Allows reading the slave output, writing to the slave input and controlling the slave.
     pub struct Pty {
         /// File descriptor of the master side of the pty
         fd:   RawFd,
@@ -20,7 +23,7 @@ pub mod pty {
         file: File
     }
 
-    /// Errors that might happen durring operations on pty
+    /// Errors that might happen durring operations on pty.
     #[derive(Debug)]
     pub enum PtyError {
         /// Failed to open pty
@@ -59,7 +62,7 @@ pub mod pty {
                 })
         }
 
-        /// Resize the child pty.
+        /// Resizes the child pty.
         pub fn resize(&self, size: &Size) -> Result<(), PtyError> {
             unsafe {
                 libc::ioctl(self.fd, libc::TIOCSWINSZ, &size.to_c_winsize())
@@ -135,20 +138,6 @@ pub mod pty {
         }
     }
 
-    impl ops::Deref for Pty {
-        type Target = File;
-
-        fn deref(&self) -> &File {
-            &self.file
-        }
-    }
-
-    impl ops::DerefMut for Pty {
-        fn deref_mut(&mut self) -> &mut File {
-            &mut self.file
-        }
-    }
-
     impl Size {
         fn to_c_winsize(&self) -> libc::winsize {
             libc::winsize {
@@ -162,7 +151,20 @@ pub mod pty {
         }
     }
 
-    trait FromLibcResult: Sized {
+    /// Converts a value returned by a libc function to a rust result.
+    pub trait FromLibcResult: Sized {
+        /// The intented use is for the user to call map_err() after this function.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # use term_mux::pty::FromLibcResult;
+        /// let result = -1;
+        /// assert_eq!(Err(()), result.to_result());
+        ///
+        /// let result = 42;
+        /// assert_eq!(Ok(42), result.to_result());
+        /// ```
         fn to_result(self) -> Result<Self, ()>;
     }
 
@@ -185,6 +187,21 @@ pub mod pty {
             // Opening shell and its pty
             let mut pty = Pty::spawn("/bin/sh", &Size { width: 100, height: 100 }).unwrap();
 
+            let read = |pty: &mut Pty| -> String {
+                let mut packet = [0; 4096];
+                let count_read;
+
+                loop {
+                    match pty.read(&mut packet) {
+                        Err(_)    => continue,
+                        Ok(0)     => continue,
+                        Ok(count) => { count_read = count; break; }
+                    }
+                }
+
+                String::from_utf8_lossy(&packet[..count_read]).to_string()
+            };
+
             // Reading
             assert!(read(&mut pty).ends_with("$ "));
 
@@ -195,19 +212,21 @@ pub mod pty {
             assert!(read(&mut pty).starts_with("exit"));
         }
 
-        fn read(pty: &mut Pty) -> String {
-            let mut packet = [0; 4096];
-            let count_read;
+        #[test]
+        fn to_c_winsize_maps_width_to_col_height_to_row_and_sets_the_rest_to_0() {
+            let expected = libc::winsize {
+                ws_row:    42,
+                ws_col:    314,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
 
-            loop {
-                match pty.read(&mut packet) {
-                    Err(_)    => continue,
-                    Ok(0)     => continue,
-                    Ok(count) => { count_read = count; break; }
-                }
-            }
+            let actual = Size { width: 314, height: 42 }.to_c_winsize();
 
-            String::from_utf8_lossy(&packet[..count_read]).to_string()
+            assert_eq!(expected.ws_row,    actual.ws_row);
+            assert_eq!(expected.ws_col,    actual.ws_col);
+            assert_eq!(expected.ws_xpixel, actual.ws_xpixel);
+            assert_eq!(expected.ws_ypixel, actual.ws_ypixel);
         }
     }
 }
@@ -215,7 +234,7 @@ pub mod pty {
 pub mod tui {
     //! Terminal UI library
 
-    /// Reprensent a rectangular size in number of columns and rows
+    /// A rectangular size in number of columns and rows
     pub struct Size {
         /// Number of columns
         pub width:  u16,

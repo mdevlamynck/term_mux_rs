@@ -12,13 +12,15 @@ fn main () {
     let mut tty = get_tty().unwrap().into_raw_mode().unwrap();
     let mut pty = Pty::spawn("/bin/sh", &Size{ width: 100, height: 100}).unwrap();
 
+    let tty_file: &mut File = &mut tty;
+
     loop {
-        pipe_input_to_output(&mut pty, &mut tty);
-        pipe_input_to_output(&mut tty, &mut pty);
+        pipe_input_to_output::<Pty, File>(&mut pty, tty_file);
+        pipe_input_to_output::<File, Pty>(tty_file, &mut pty);
     }
 }
 
-fn pipe_input_to_output(input: &mut File, output: &mut File) {
+fn pipe_input_to_output<R: Read, W: Write>(input: &mut Read, output: &mut Write) {
     let mut packet = [0; 4096];
     let read_count: usize;
 
