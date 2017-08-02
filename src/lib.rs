@@ -1,9 +1,7 @@
 extern crate libc;
 
-use std::fs::{OpenOptions, File};
-use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::{AsRawFd, IntoRawFd, FromRawFd};
-use std::ffi::{CStr, CString};
+use std::fs::File;
+use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::io::{self, Write, Read};
 use std::process::{Command, Stdio};
@@ -55,17 +53,17 @@ impl Pty {
             .stderr(unsafe { Stdio::from_raw_fd(slave) })
             .before_exec(before_exec)
             .spawn()
+            .map_err(|_| PtyError::SpawnShell)
             .and_then(|_| {
-                let mut pty = Pty {
+                let pty = Pty {
                     fd:   master,
                     file: unsafe { File::from_raw_fd(master) }
                 };
 
-                pty.resize(&size);
+                pty.resize(&size)?;
 
                 Ok(pty)
             })
-            .map_err(|_| PtyError::SpawnShell)
     }
 
     /// Resize the child pty.

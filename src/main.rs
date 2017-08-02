@@ -22,7 +22,7 @@ fn pipe_input_to_output(input: &mut File, output: &mut File) {
     let read_count: usize;
 
     loop {
-        let count = match input.read(&mut packet) {
+        match input.read(&mut packet) {
             Err(_)    => continue,
             Ok(0)     => continue,
             Ok(count) => { read_count = count ; break }
@@ -30,6 +30,6 @@ fn pipe_input_to_output(input: &mut File, output: &mut File) {
     }
 
     let read = &packet[..read_count];
-    output.write_all(&read);
-    output.flush();
+    output.write_all(&read).unwrap();
+    output.flush().unwrap();
 }
