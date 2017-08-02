@@ -3,13 +3,14 @@ extern crate termion;
 
 use termion::get_tty;
 use termion::raw::IntoRawMode;
-use term_mux::pty::{Pty, WinSize};
+use term_mux::pty::Pty;
+use term_mux::tui::Size;
 use std::io::{Read, Write};
 use std::fs::File;
 
 fn main () {
     let mut tty = get_tty().unwrap().into_raw_mode().unwrap();
-    let mut pty = Pty::spawn("/bin/sh", &WinSize{ width: 100, height: 100}).unwrap();
+    let mut pty = Pty::spawn("/bin/sh", &Size{ width: 100, height: 100}).unwrap();
 
     loop {
         pipe_input_to_output(&mut pty, &mut tty);
