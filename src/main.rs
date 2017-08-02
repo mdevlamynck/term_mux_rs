@@ -3,7 +3,7 @@ extern crate termion;
 
 use termion::get_tty;
 use termion::raw::IntoRawMode;
-use term_mux::{Pty, WinSize};
+use term_mux::pty::{Pty, WinSize};
 use std::io::{Read, Write};
 use std::fs::File;
 
