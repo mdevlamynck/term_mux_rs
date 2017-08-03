@@ -96,7 +96,7 @@ pub mod pty {
 
             libc::fcntl(master,
                         libc::F_SETFL,
-                         current_config | libc::O_NONBLOCK)
+                         current_config)
                 .to_result()
                 .map_err(|_| PtyError::OpenPty)?;
         }
@@ -135,6 +135,20 @@ pub mod pty {
 
         fn flush(&mut self) -> io::Result<()> {
             self.file.flush()
+        }
+    }
+
+    impl ops::Deref for Pty {
+        type Target = File;
+
+        fn deref(&self) -> &File {
+            &self.file
+        }
+    }
+
+    impl ops::DerefMut for Pty {
+        fn deref_mut(&mut self) -> &mut File {
+            &mut self.file
         }
     }
 
@@ -187,29 +201,20 @@ pub mod pty {
             // Opening shell and its pty
             let mut pty = Pty::spawn("/bin/sh", &Size { width: 100, height: 100 }).unwrap();
 
-            let read = |pty: &mut Pty| -> String {
-                let mut packet = [0; 4096];
-                let count_read;
-
-                loop {
-                    match pty.read(&mut packet) {
-                        Err(_)    => continue,
-                        Ok(0)     => continue,
-                        Ok(count) => { count_read = count; break; }
-                    }
-                }
-
-                String::from_utf8_lossy(&packet[..count_read]).to_string()
-            };
+            let mut packet = [0; 4096];
 
             // Reading
-            assert!(read(&mut pty).ends_with("$ "));
+            let count = pty.read(&mut packet).unwrap();
+            let output = String::from_utf8_lossy(&packet[..count]).to_string();
+            assert!(output.ends_with("$ "));
 
             // Writing and reading effect
             pty.write_all("exit\n".as_bytes()).unwrap();
             pty.flush().unwrap();
 
-            assert!(read(&mut pty).starts_with("exit"));
+            let count = pty.read(&mut packet).unwrap();
+            let output = String::from_utf8_lossy(&packet[..count]).to_string();
+            assert!(output.starts_with("exit"));
         }
 
         #[test]
