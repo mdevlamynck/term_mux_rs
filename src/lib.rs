@@ -1,3 +1,5 @@
+//! Terminal multiplexer
+
 extern crate libc;
 extern crate termion;
 
@@ -15,6 +17,7 @@ pub mod pty {
     use std::ops;
     use libc;
     use ::tui::Size;
+    use ::util::FromLibcResult;
 
     /// Master side of a pty master / slave pair.
     ///
@@ -168,32 +171,6 @@ pub mod pty {
         }
     }
 
-    /// Converts a value returned by a libc function to a rust result.
-    pub trait FromLibcResult: Sized {
-        /// The intented use is for the user to call map_err() after this function.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// # use term_mux::pty::FromLibcResult;
-        /// let result = -1;
-        /// assert_eq!(Err(()), result.to_result());
-        ///
-        /// let result = 42;
-        /// assert_eq!(Ok(42), result.to_result());
-        /// ```
-        fn to_result(self) -> Result<Self, ()>;
-    }
-
-    impl FromLibcResult for libc::c_int {
-        fn to_result(self) -> Result<Self, ()> {
-            match self {
-                -1  => Err(()),
-                res => Ok(res),
-            }
-        }
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -259,7 +236,7 @@ pub mod tui {
     }
 }
 
-mod util {
+pub mod util {
     //! Utilities
 
     use std::env;
@@ -275,14 +252,9 @@ mod util {
     /// Return the informations in /etc/passwd corresponding to the current user.
     fn get_passwd() -> Result<Passwd, ()> {
         unsafe {
-            let uid = libc::getuid();
-            let passwd = libc::getpwuid(uid);
+            let passwd = libc::getpwuid(libc::getuid()).to_result()?;
 
-            if passwd == ptr::null_mut() {
-                return Err(());
-            }
-
-            let shell = CStr::from_ptr((*passwd).pw_shell)
+            let shell = CStr::from_ptr(passwd.pw_shell)
                 .to_str()
                 .map_err(|_| ())?
                 .to_string();
@@ -311,5 +283,44 @@ mod util {
         env::var("SHELL")
             .or_else(|_| get_passwd().map(|passwd| passwd.shell))
             .unwrap_or_else(|_| "/bin/sh".to_string())
+    }
+
+    /// Converts a value returned by a libc function to a rust result.
+    pub trait FromLibcResult: Sized {
+        type Target;
+
+        /// The intented use is for the user to call map_err() after this function.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # use term_mux::util::FromLibcResult;
+        /// let result = -1;
+        /// assert_eq!(Err(()), result.to_result());
+        ///
+        /// let result = 42;
+        /// assert_eq!(Ok(42), result.to_result());
+        /// ```
+        fn to_result(self) -> Result<Self::Target, ()>;
+    }
+
+    impl FromLibcResult for libc::c_int {
+        type Target = libc::c_int;
+
+        fn to_result(self) -> Result<libc::c_int, ()> {
+            match self {
+                -1  => Err(()),
+                res => Ok(res),
+            }
+        }
+    }
+
+    impl FromLibcResult for *mut libc::passwd {
+        type Target = libc::passwd;
+
+        fn to_result(self) -> Result<libc::passwd, ()> {
+            if self == ptr::null_mut() { return Err(()) }
+            else                       { unsafe { Ok(*self) } }
+        }
     }
 }
