@@ -1,18 +1,19 @@
 extern crate term_mux;
 extern crate termion;
 
-use termion::get_tty;
-use termion::raw::IntoRawMode;
-use term_mux::pty::Pty;
-use term_mux::tui::Size;
 use std::io::{Read, Write, Result};
 use std::fs::File;
 use std::thread;
 use std::time::Duration;
+use termion::get_tty;
+use termion::raw::IntoRawMode;
+use term_mux::pty::Pty;
+use term_mux::tui::Size;
+use term_mux::get_shell;
 
 fn main () {
     let mut tty_output = get_tty().unwrap().into_raw_mode().unwrap();
-    let mut pty_output = Pty::spawn("/bin/sh", &Size{ width: 100, height: 100}).unwrap();
+    let mut pty_output = Pty::spawn(&get_shell(), &Size{ width: 100, height: 100}).unwrap();
 
     let mut tty_input = tty_output.try_clone().unwrap();
     let mut pty_input = pty_output.try_clone().unwrap();

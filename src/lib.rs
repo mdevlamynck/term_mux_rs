@@ -1,5 +1,7 @@
 extern crate libc;
 
+pub use util::get_shell;
+
 pub mod pty {
     //! pty low level handling
 
@@ -245,5 +247,60 @@ pub mod tui {
         pub width:  u16,
         /// Number of rows
         pub height: u16,
+    }
+}
+
+mod util {
+    //! Utilities
+
+    use std::env;
+    use std::ptr;
+    use std::ffi::CStr;
+    use libc;
+
+    /// The informations in /etc/passwd corresponding to the current user.
+    struct Passwd {
+        pub shell: String
+    }
+
+    /// Return the informations in /etc/passwd corresponding to the current user.
+    fn get_passwd() -> Result<Passwd, ()> {
+        unsafe {
+            let uid = libc::getuid();
+            let passwd = libc::getpwuid(uid);
+
+            if passwd == ptr::null_mut() {
+                return Err(());
+            }
+
+            let shell = CStr::from_ptr((*passwd).pw_shell)
+                .to_str()
+                .map_err(|_| ())?
+                .to_string();
+
+            Ok(Passwd { shell })
+        }
+    }
+
+    /// Returns the path to the shell executable.
+    ///
+    /// Tries in order:
+    ///
+    /// * to read the SHELL env var
+    /// * to read the user's passwd
+    /// * defaults to /bin/sh
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use term_mux::get_shell;
+    /// let shell = get_shell();
+    /// assert!(shell.contains("/bin/"));
+    /// assert!(shell.contains("sh"));
+    /// ```
+    pub fn get_shell() -> String {
+        env::var("SHELL")
+            .or_else(|_| get_passwd().map(|passwd| passwd.shell))
+            .unwrap_or_else(|_| "/bin/sh".to_string())
     }
 }
