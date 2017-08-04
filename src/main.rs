@@ -14,13 +14,14 @@ use term_mux::tui::{get_terminal_size, Size};
 use term_mux::get_shell;
 
 fn main () {
-    let signal = notify(&[Signal::WINCH]);
+    let signal         = notify(&[Signal::WINCH]);
 
-    let (pty, mut pty_input) = Pty::spawn(&get_shell(), &get_terminal_size().unwrap()).unwrap();
+    let mut tty_output = get_tty().unwrap().into_raw_mode().unwrap();
+    let mut tty_input  = tty_output.try_clone().unwrap();
 
-    let mut tty_input = get_tty().unwrap().into_raw_mode().unwrap();
-    let mut tty_output = tty_input.try_clone().unwrap();
-    let mut pty_output = pty_input.try_clone().unwrap();
+    let pty_resize     = Pty::spawn(&get_shell(), &get_terminal_size().unwrap()).unwrap();
+    let mut pty_output = pty_resize.try_clone().unwrap();
+    let mut pty_input  = pty_output.try_clone().unwrap();
 
     let handle = thread::spawn(move || {
         loop {
@@ -43,7 +44,7 @@ fn main () {
     thread::spawn(move || {
         loop {
             signal.recv().unwrap();
-            pty.resize(&get_terminal_size().unwrap());
+            pty_resize.resize(&get_terminal_size().unwrap());
         }
     });
 

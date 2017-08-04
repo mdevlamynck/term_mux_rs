@@ -24,7 +24,9 @@ pub mod pty {
     /// Allows reading the slave output, writing to the slave input and controlling the slave.
     pub struct Pty {
         /// File descriptor of the master side of the pty
-        fd: RawFd,
+        fd:   RawFd,
+        /// File built from fd to access Read and Write traits
+        file: File,
     }
 
     /// Errors that might happen durring operations on pty.
@@ -42,7 +44,7 @@ pub mod pty {
         /// Spawns a child process running the given shell executable with the
         /// given size in a newly created pty.
         /// Returns a Pty representing the master side controlling the pty.
-        pub fn spawn(shell: &str, size: &Size) -> Result<(Pty, File), PtyError> {
+        pub fn spawn(shell: &str, size: &Size) -> Result<Pty, PtyError> {
             let (master, slave) = openpty(&size)?;
             
             Command::new(&shell)
@@ -54,12 +56,13 @@ pub mod pty {
                 .map_err(|_| PtyError::SpawnShell)
                 .and_then(|_| {
                     let pty = Pty {
-                        fd: master,
+                        fd:   master,
+                        file: unsafe { File::from_raw_fd(master) },
                     };
 
                     pty.resize(&size)?;
 
-                    Ok((pty, unsafe { File::from_raw_fd(master) }))
+                    Ok(pty)
                 })
         }
 
@@ -136,6 +139,36 @@ pub mod pty {
         }
     }
 
+    impl Read for Pty {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.file.read(buf)
+        }
+    }
+
+    impl Write for Pty {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.file.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.file.flush()
+        }
+    }
+
+    impl ops::Deref for Pty {
+        type Target = File;
+
+        fn deref(&self) -> &File {
+            &self.file
+        }
+    }
+
+    impl ops::DerefMut for Pty {
+        fn deref_mut(&mut self) -> &mut File {
+            &mut self.file
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -144,20 +177,20 @@ pub mod pty {
         #[test]
         fn can_open_a_shell_with_its_own_pty_and_can_read_and_write_to_its_master_side() {
             // Opening shell and its pty
-            let (pty, mut file) = Pty::spawn("/bin/sh", &Size { width: 100, height: 100 }).unwrap();
+            let mut pty = Pty::spawn("/bin/sh", &Size { width: 100, height: 100 }).unwrap();
 
             let mut packet = [0; 4096];
 
             // Reading
-            let count = file.read(&mut packet).unwrap();
+            let count = pty.read(&mut packet).unwrap();
             let output = String::from_utf8_lossy(&packet[..count]).to_string();
             assert!(output.ends_with("$ "));
 
             // Writing and reading effect
-            file.write_all("exit\n".as_bytes()).unwrap();
-            file.flush().unwrap();
+            pty.write_all("exit\n".as_bytes()).unwrap();
+            pty.flush().unwrap();
 
-            let count = file.read(&mut packet).unwrap();
+            let count = pty.read(&mut packet).unwrap();
             let output = String::from_utf8_lossy(&packet[..count]).to_string();
             assert!(output.starts_with("exit"));
         }
