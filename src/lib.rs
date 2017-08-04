@@ -144,20 +144,20 @@ pub mod pty {
         #[test]
         fn can_open_a_shell_with_its_own_pty_and_can_read_and_write_to_its_master_side() {
             // Opening shell and its pty
-            let mut pty = Pty::spawn("/bin/sh", &Size { width: 100, height: 100 }).unwrap();
+            let (pty, mut file) = Pty::spawn("/bin/sh", &Size { width: 100, height: 100 }).unwrap();
 
             let mut packet = [0; 4096];
 
             // Reading
-            let count = pty.read(&mut packet).unwrap();
+            let count = file.read(&mut packet).unwrap();
             let output = String::from_utf8_lossy(&packet[..count]).to_string();
             assert!(output.ends_with("$ "));
 
             // Writing and reading effect
-            pty.write_all("exit\n".as_bytes()).unwrap();
-            pty.flush().unwrap();
+            file.write_all("exit\n".as_bytes()).unwrap();
+            file.flush().unwrap();
 
-            let count = pty.read(&mut packet).unwrap();
+            let count = file.read(&mut packet).unwrap();
             let output = String::from_utf8_lossy(&packet[..count]).to_string();
             assert!(output.starts_with("exit"));
         }
