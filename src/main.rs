@@ -14,48 +14,45 @@ use term_mux::tui::{get_terminal_size, Size};
 use term_mux::get_shell;
 
 fn main () {
-    let signal = notify(&[Signal::WINCH]);
-    let pty_resize = Pty::spawn(&get_shell(), &get_terminal_size().unwrap()).unwrap();
+    let signal         = notify(&[Signal::WINCH]);
 
     let mut tty_output = get_tty().unwrap().into_raw_mode().unwrap();
+    let mut tty_input  = tty_output.try_clone().unwrap();
+
+    let pty_resize     = Pty::spawn(&get_shell(), &get_terminal_size().unwrap()).unwrap();
     let mut pty_output = pty_resize.try_clone().unwrap();
+    let mut pty_input  = pty_output.try_clone().unwrap();
 
-    let mut tty_input = tty_output.try_clone().unwrap();
-    let mut pty_input = pty_output.try_clone().unwrap();
-
-
-    let handle1 = thread::spawn(move || {
+    let handle = thread::spawn(move || {
         loop {
-            let tty_file: &mut File = &mut tty_output;
-            match pipe::<Pty, File>(&mut pty_input, tty_file) {
+            match pipe(&mut pty_input, &mut tty_output) {
                 Err(_) => return,
                 _      => (),
             }
         }
     });
 
-    let handle2 = thread::spawn(move || {
+    thread::spawn(move || {
         loop {
-            let tty_file: &mut File = &mut tty_input;
-            match pipe::<File, Pty>(tty_file, &mut pty_output) {
+            match pipe(&mut tty_input, &mut pty_output) {
                 Err(_) => return,
                 _      => (),
             }
         }
     });
 
-    let handle3 = thread::spawn(move || {
+    thread::spawn(move || {
         loop {
             signal.recv().unwrap();
             pty_resize.resize(&get_terminal_size().unwrap());
         }
     });
 
-    handle1.join();
+    handle.join();
 }
 
 /// Sends the content of input into output
-fn pipe<R: Read, W: Write>(input: &mut Read, output: &mut Write) -> Result<()> {
+fn pipe(input: &mut File, output: &mut File) -> Result<()> {
     let mut packet = [0; 4096];
 
     let count = input.read(&mut packet)?;

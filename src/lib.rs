@@ -9,7 +9,7 @@ pub mod pty {
     //! pty low level handling
 
     use std::fs::File;
-    use std::os::unix::io::FromRawFd;
+    use std::os::unix::io::{FromRawFd, RawFd};
     use std::ptr;
     use std::io::{self, Write, Read};
     use std::process::{Command, Stdio};
@@ -26,7 +26,7 @@ pub mod pty {
         /// File descriptor of the master side of the pty
         fd:   RawFd,
         /// File built from fd to access Read and Write traits
-        file: File
+        file: File,
     }
 
     /// Errors that might happen durring operations on pty.
@@ -39,8 +39,6 @@ pub mod pty {
         /// Failed to resize the pty
         Resize,
     }
-
-    type RawFd = libc::c_int;
 
     impl Pty {
         /// Spawns a child process running the given shell executable with the
@@ -59,7 +57,7 @@ pub mod pty {
                 .and_then(|_| {
                     let pty = Pty {
                         fd:   master,
-                        file: unsafe { File::from_raw_fd(master) }
+                        file: unsafe { File::from_raw_fd(master) },
                     };
 
                     pty.resize(&size)?;
@@ -128,6 +126,19 @@ pub mod pty {
         Ok(())
     }
 
+    impl Size {
+        fn to_c_winsize(&self) -> libc::winsize {
+            libc::winsize {
+                ws_row:    self.height,
+                ws_col:    self.width,
+
+                // Unused fields in libc::winsize
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            }
+        }
+    }
+
     impl Read for Pty {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             self.file.read(buf)
@@ -155,19 +166,6 @@ pub mod pty {
     impl ops::DerefMut for Pty {
         fn deref_mut(&mut self) -> &mut File {
             &mut self.file
-        }
-    }
-
-    impl Size {
-        fn to_c_winsize(&self) -> libc::winsize {
-            libc::winsize {
-                ws_row:    self.height,
-                ws_col:    self.width,
-
-                // Unused fields in libc::winsize
-                ws_xpixel: 0,
-                ws_ypixel: 0,
-            }
         }
     }
 
