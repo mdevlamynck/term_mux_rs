@@ -9,7 +9,7 @@ pub mod pty {
     //! pty low level handling
 
     use std::fs::File;
-    use std::os::unix::io::FromRawFd;
+    use std::os::unix::io::{FromRawFd, RawFd};
     use std::ptr;
     use std::io::{self, Write, Read};
     use std::process::{Command, Stdio};
@@ -24,9 +24,7 @@ pub mod pty {
     /// Allows reading the slave output, writing to the slave input and controlling the slave.
     pub struct Pty {
         /// File descriptor of the master side of the pty
-        fd:   RawFd,
-        /// File built from fd to access Read and Write traits
-        file: File
+        fd: RawFd,
     }
 
     /// Errors that might happen durring operations on pty.
@@ -40,13 +38,11 @@ pub mod pty {
         Resize,
     }
 
-    type RawFd = libc::c_int;
-
     impl Pty {
         /// Spawns a child process running the given shell executable with the
         /// given size in a newly created pty.
         /// Returns a Pty representing the master side controlling the pty.
-        pub fn spawn(shell: &str, size: &Size) -> Result<Pty, PtyError> {
+        pub fn spawn(shell: &str, size: &Size) -> Result<(Pty, File), PtyError> {
             let (master, slave) = openpty(&size)?;
             
             Command::new(&shell)
@@ -58,13 +54,12 @@ pub mod pty {
                 .map_err(|_| PtyError::SpawnShell)
                 .and_then(|_| {
                     let pty = Pty {
-                        fd:   master,
-                        file: unsafe { File::from_raw_fd(master) }
+                        fd: master,
                     };
 
                     pty.resize(&size)?;
 
-                    Ok(pty)
+                    Ok((pty, unsafe { File::from_raw_fd(master) }))
                 })
         }
 
@@ -126,36 +121,6 @@ pub mod pty {
         }
 
         Ok(())
-    }
-
-    impl Read for Pty {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            self.file.read(buf)
-        }
-    }
-
-    impl Write for Pty {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.file.write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.file.flush()
-        }
-    }
-
-    impl ops::Deref for Pty {
-        type Target = File;
-
-        fn deref(&self) -> &File {
-            &self.file
-        }
-    }
-
-    impl ops::DerefMut for Pty {
-        fn deref_mut(&mut self) -> &mut File {
-            &mut self.file
-        }
     }
 
     impl Size {
