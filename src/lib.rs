@@ -3,13 +3,10 @@
 extern crate libc;
 extern crate termion;
 
-pub use util::get_shell;
-
+/// pty low level handling
 pub mod pty {
-    //! pty low level handling
-
     use std::fs::File;
-    use std::os::unix::io::{FromRawFd, RawFd};
+    use std::os::unix::io::{FromRawFd, AsRawFd, RawFd};
     use std::ptr;
     use std::io::{self, Write, Read};
     use std::process::{Command, Stdio};
@@ -23,8 +20,6 @@ pub mod pty {
     ///
     /// Allows reading the slave output, writing to the slave input and controlling the slave.
     pub struct Pty {
-        /// File descriptor of the master side of the pty
-        fd:   RawFd,
         /// File built from fd to access Read and Write traits
         file: File,
     }
@@ -55,10 +50,7 @@ pub mod pty {
                 .spawn()
                 .map_err(|_| PtyError::SpawnShell)
                 .and_then(|_| {
-                    let pty = Pty {
-                        fd:   master,
-                        file: unsafe { File::from_raw_fd(master) },
-                    };
+                    let pty = Pty { file: unsafe { File::from_raw_fd(master) } };
 
                     pty.resize(&size)?;
 
@@ -69,11 +61,28 @@ pub mod pty {
         /// Resizes the child pty.
         pub fn resize(&self, size: &Size) -> Result<(), PtyError> {
             unsafe {
-                libc::ioctl(self.fd, libc::TIOCSWINSZ, &size.to_c_winsize())
+                libc::ioctl(self.as_raw_fd(), libc::TIOCSWINSZ, &size.to_c_winsize())
                     .to_result()
                     .map(|_| ())
                     .map_err(|_| PtyError::Resize)
             }
+        }
+
+        /// Put the pty master file in non blocking mode
+        pub fn non_blocking(&self) -> Result<(), ()> {
+            let fd = self.as_raw_fd();
+
+            unsafe {
+                let current_config = libc::fcntl(fd, libc::F_GETFL, 0)
+                    .to_result()?;
+
+                libc::fcntl(fd,
+                            libc::F_SETFL,
+                            current_config | libc::O_NONBLOCK)
+                    .to_result()?;
+            }
+
+            Ok(())
         }
     }
 
@@ -93,16 +102,6 @@ pub mod pty {
                 .to_result()
                 .map_err(|_| PtyError::OpenPty)?;
 
-            // Configure master to be non blocking
-            let current_config = libc::fcntl(master, libc::F_GETFL, 0)
-                .to_result()
-                .map_err(|_| PtyError::OpenPty)?;
-
-            libc::fcntl(master,
-                        libc::F_SETFL,
-                         current_config)
-                .to_result()
-                .map_err(|_| PtyError::OpenPty)?;
         }
 
         Ok((master, slave))
@@ -196,6 +195,15 @@ pub mod pty {
         }
 
         #[test]
+        fn cant_read_from_non_blocking_master() {
+            let mut pty = Pty::spawn("/bin/sh", &Size { width: 100, height: 100 }).unwrap();
+            pty.non_blocking().unwrap();
+
+            let mut packet = [0; 4096];
+            pty.read(&mut packet).is_err();
+        }
+
+        #[test]
         fn to_c_winsize_maps_width_to_col_height_to_row_and_sets_the_rest_to_0() {
             let expected = libc::winsize {
                 ws_row:    42,
@@ -214,9 +222,8 @@ pub mod pty {
     }
 }
 
+/// Terminal UI library
 pub mod tui {
-    //! Terminal UI library
-
     use termion;
 
     /// A rectangular size in number of columns and rows
@@ -234,9 +241,8 @@ pub mod tui {
     }
 }
 
+/// Utilities
 pub mod util {
-    //! Utilities
-
     use std::env;
     use std::ptr;
     use std::ffi::CStr;
@@ -271,8 +277,8 @@ pub mod util {
     ///
     /// # Example
     ///
-    /// ```
-    /// # use term_mux::get_shell;
+    /// ```rust
+    /// # use term_mux::util::get_shell;
     /// let shell = get_shell();
     /// assert!(shell.contains("/bin/"));
     /// assert!(shell.contains("sh"));
@@ -291,7 +297,7 @@ pub mod util {
         ///
         /// # Examples
         ///
-        /// ```
+        /// ```rust
         /// # use term_mux::util::FromLibcResult;
         /// let result = -1;
         /// assert_eq!(Err(()), result.to_result());
@@ -319,6 +325,31 @@ pub mod util {
         fn to_result(self) -> Result<libc::passwd, ()> {
             if self == ptr::null_mut() { return Err(()) }
             else                       { unsafe { Ok(*self) } }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::mem;
+        use libc;
+
+        #[test]
+        fn to_result_on_c_int() {
+            let result = -1;
+            assert_eq!(Err(()), result.to_result());
+
+            let result = 42;
+            assert_eq!(Ok(42), result.to_result());
+        }
+
+        #[test]
+        fn to_result_on_passwd() {
+            let passwd: *mut libc::passwd = ptr::null_mut();
+            assert!(passwd.to_result().is_err());
+
+            let passwd: *mut libc::passwd = unsafe { &mut mem::uninitialized() };
+            assert!(passwd.to_result().is_ok());
         }
     }
 }
