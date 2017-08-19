@@ -8,6 +8,7 @@ license = "MIT"
 libc = "0"
 termion = "1"
 chan-signal = "0"
+vte = "0"
 
 [[bin]]
 name = "term_mux"
