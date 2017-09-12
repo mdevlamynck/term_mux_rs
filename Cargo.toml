@@ -9,6 +9,10 @@ libc = "0"
 termion = "1"
 chan-signal = "0"
 vte = "0"
+mockers_macros = "0.6.3"
+
+[dev-dependencies]
+mockers = "0.6.3"
 
 [[bin]]
 name = "term_mux"
